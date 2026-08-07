@@ -132,7 +132,15 @@ class OoklaSpeedtestMinimal extends HTMLElement {
 
   _runTest() {
     if (this._hass) {
-      this._hass.callService('ookla_speedtest', 'run_speedtest');
+      const entityId =
+        this._config?.entities?.download ||
+        this._config?.entities?.ping ||
+        this._config?.entities?.upload;
+      this._hass.callService(
+        'ookla_speedtest',
+        'run_speedtest',
+        entityId ? { entity_id: entityId } : {}
+      );
       const btn = this.shadowRoot.querySelector('.test-btn');
       if (btn) {
         btn.textContent = 'Testing...';

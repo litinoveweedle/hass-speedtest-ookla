@@ -164,7 +164,12 @@ class OoklaSpeedtestCardSimple extends HTMLElement {
     if (btn) {
       btn.addEventListener('click', () => {
         if (this._hass) {
-          this._hass.callService('ookla_speedtest', 'run_speedtest');
+          const entityId =
+            this._config?.entities?.download ||
+            this._config?.entities?.ping ||
+            this._config?.entities?.upload ||
+            'sensor.ookla_speedtest_download';
+          this._hass.callService('ookla_speedtest', 'run_speedtest', { entity_id: entityId });
           btn.textContent = 'Testing...';
           setTimeout(() => btn.textContent = 'GO', 3000);
         }
