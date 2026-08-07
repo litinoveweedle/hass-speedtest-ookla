@@ -9,13 +9,9 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_CONFIG_ENTRY_ID,
-    EVENT_HOMEASSISTANT_STARTED,
-    Platform,
-)
+from homeassistant.const import ATTR_DEVICE_ID, EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import selector, service
+from homeassistant.helpers import device_registry as dr, selector, service
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_point_in_time,
@@ -74,8 +70,10 @@ PLATFORMS = [Platform.SENSOR]
 
 RUN_SPEEDTEST_SCHEMA = vol.Schema(
     {
-        vol.Optional(ATTR_CONFIG_ENTRY_ID): selector.ConfigEntrySelector(
-            {"integration": DOMAIN}
+        vol.Optional(ATTR_DEVICE_ID): selector.DeviceSelector(
+            selector.DeviceSelectorConfig(
+                filter=selector.DeviceFilterSelectorConfig(integration=DOMAIN)
+            )
         ),
     }
 )
@@ -432,13 +430,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register service to manually run a speed test
     async def run_speedtest_service(call: ServiceCall) -> None:
         """Service to manually run a speedtest."""
-        config_entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
+        device_id = call.data.get(ATTR_DEVICE_ID)
         coordinators: list[SpeedtestCoordinator]
 
-        if config_entry_id:
-            config_entry = service.async_get_config_entry(
-                hass, DOMAIN, config_entry_id
+        if device_id:
+            device_registry = dr.async_get(hass)
+            device_entry = device_registry.async_get(device_id)
+            if device_entry is None:
+                _LOGGER.warning("Unknown Ookla Speedtest device requested: %s", device_id)
+                return
+
+            matching_entry_id = next(
+                (
+                    entry_id
+                    for entry_id in device_entry.config_entries
+                    if (
+                        entry := hass.config_entries.async_get_entry(entry_id)
+                    ) is not None
+                    and entry.domain == DOMAIN
+                ),
+                None,
             )
+            if matching_entry_id is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest device is not linked to a loaded config entry: %s",
+                    device_id,
+                )
+                return
+
+            config_entry = service.async_get_config_entry(hass, DOMAIN, matching_entry_id)
             coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
             if coordinator is None:
                 _LOGGER.warning(
