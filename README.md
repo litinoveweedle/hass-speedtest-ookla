@@ -61,7 +61,7 @@
 ```yaml
 service: ookla_speedtest.run_speedtest
 ```
-- Optionally pass `config_entry_id` to run one configured test; if omitted, the service runs all configured tests.
+- Optionally pass `device_id` to run one configured test; if omitted, the service runs all configured tests.
 
 
 ## Installation
