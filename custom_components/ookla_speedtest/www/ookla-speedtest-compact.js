@@ -122,7 +122,16 @@ class OoklaSpeedtestCompact extends HTMLElement {
   _runTest() {
     if (!this._hass) return;
 
-    this._hass.callService('ookla_speedtest', 'run_speedtest');
+    const entityId =
+      this._config?.entities?.download ||
+      this._config?.entities?.ping ||
+      this._config?.entities?.upload;
+
+    this._hass.callService(
+      'ookla_speedtest',
+      'run_speedtest',
+      entityId ? { entity_id: entityId } : {}
+    );
     const btn = this.shadowRoot.querySelector('.action-button');
     if (btn) {
       btn.classList.add('running');

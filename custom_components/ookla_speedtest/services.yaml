@@ -2,6 +2,13 @@ run_speedtest:
   name: Run Speedtest
   description: Manually trigger one or all configured Ookla Speedtest runs.
   fields:
+    entity_id:
+      name: Entity
+      description: Optional Ookla Speedtest entity to run only that configured test device.
+      selector:
+        entity:
+          filter:
+            integration: ookla_speedtest
     device_id:
       name: Device
       description: Optional Ookla Speedtest device to run only that configured test. If omitted, all configured tests are run.
