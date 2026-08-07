@@ -6,10 +6,20 @@ import subprocess
 from datetime import timedelta
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
+from homeassistant.const import (
+    ATTR_CONFIG_ENTRY_ID,
+    EVENT_HOMEASSISTANT_STARTED,
+    Platform,
+)
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers.event import async_call_later, async_track_point_in_time
+from homeassistant.helpers import selector, service
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_point_in_time,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -63,6 +73,14 @@ from .www_manager import (
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
+
+RUN_SPEEDTEST_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): selector.ConfigEntrySelector(
+            {"integration": DOMAIN}
+        ),
+    }
+)
 
 
 async def async_setup_cards_and_resources(hass: HomeAssistant) -> None:
@@ -438,14 +456,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register service to manually run a speed test
     async def run_speedtest_service(call: ServiceCall) -> None:
         """Service to manually run a speedtest."""
-        # Clear sensor data before running test to avoid confusion with old data
-        coordinator.async_set_updated_data(None)
-        await coordinator.async_request_refresh()
+        config_entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
+        coordinators: list[SpeedtestCoordinator]
+
+        if config_entry_id:
+            config_entry = service.async_get_config_entry(
+                hass, DOMAIN, config_entry_id
+            )
+            coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
+            if coordinator is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest config entry is not ready: %s",
+                    config_entry.title,
+                )
+                return
+            coordinators = [coordinator]
+        else:
+            coordinators = list(hass.data[DOMAIN].values())
+
+        for item in coordinators:
+            item.async_set_updated_data(None)
+            await item.async_request_refresh()
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_RUN_SPEEDTEST,
         run_speedtest_service,
+        schema=RUN_SPEEDTEST_SCHEMA,
     )
 
     # Delay first speedtest in interval mode to avoid blocking HA startup
@@ -485,9 +522,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.services.async_remove(DOMAIN, SERVICE_RUN_SPEEDTEST)
         if entry.entry_id in hass.data[DOMAIN]:
             hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, SERVICE_RUN_SPEEDTEST):
+            hass.services.async_remove(DOMAIN, SERVICE_RUN_SPEEDTEST)
 
     return unload_ok
 

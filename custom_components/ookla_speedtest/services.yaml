@@ -1,7 +1,13 @@
 run_speedtest:
   name: Run Speedtest
-  description: Manually trigger an Ookla Speedtest run.
-  fields: {}
+  description: Manually trigger one or all configured Ookla Speedtest runs.
+  fields:
+    config_entry_id:
+      name: Config Entry
+      description: Optional Ookla Speedtest config entry to run only that configured test. If omitted, all configured tests are run.
+      selector:
+        config_entry:
+          integration: ookla_speedtest
 
 register_card_resources:
   name: Register Card Resources
