@@ -11,7 +11,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_DEVICE_ID, EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import device_registry as dr, selector, service
+from homeassistant.helpers import device_registry as dr, selector
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_point_in_time,
@@ -482,7 +482,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 return
 
-            config_entry = service.async_get_config_entry(hass, DOMAIN, matching_entry_id)
+            config_entry = hass.config_entries.async_get_entry(matching_entry_id)
+            if config_entry is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest config entry is not ready: %s",
+                    matching_entry_id,
+                )
+                return
+
             coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
             if coordinator is None:
                 _LOGGER.warning(
