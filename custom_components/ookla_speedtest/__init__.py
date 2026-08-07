@@ -3,13 +3,12 @@
 import json
 import logging
 import subprocess
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later, async_track_point_in_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -37,21 +36,23 @@ from .const import (
     ATTR_UPLOAD_LATENCY_HIGH,
     ATTR_UPLOAD_LATENCY_JITTER,
     CONF_FALLBACK_TO_CLOSEST,
+    CONF_MANUAL,
     CONF_ISP_DL_SPEED,
     CONF_ISP_UL_SPEED,
-    CONF_MANUAL,
     CONF_SCAN_INTERVAL,
+    CONF_SOURCE_INTERFACE,
+    CONF_SOURCE_IP,
     CONF_SERVER_ID,
     CONF_START_TIME,
     DEFAULT_FALLBACK_TO_CLOSEST,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    SPEEDTEST_BIN_PATH,
     SERVICE_RUN_SPEEDTEST,
+    SPEEDTEST_BIN_PATH,
     STARTUP_DELAY,
 )
 from .binary_manager import async_setup_speedtest
-from .helpers import validate_server_id
+from .helpers import validate_server_id, validate_source_ip
 from .www_manager import (
     async_setup_cards,
     async_register_resources_service,
@@ -111,6 +112,8 @@ class SpeedtestCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         start_time: str | None = None,
         isp_dl_speed: float | None = None,
         isp_ul_speed: float | None = None,
+        source_interface: str | None = None,
+        source_ip: str | None = None,
         fallback_to_closest: bool = DEFAULT_FALLBACK_TO_CLOSEST,
     ) -> None:
         """Initialize the coordinator."""
@@ -120,6 +123,8 @@ class SpeedtestCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.scan_interval = scan_interval
         self.isp_dl_speed = isp_dl_speed
         self.isp_ul_speed = isp_ul_speed
+        self.source_interface = (source_interface or "").strip() or None
+        self.source_ip = (source_ip or "").strip() or None
         self.fallback_to_closest = fallback_to_closest
         self._unsub_schedule = None
 
@@ -140,7 +145,6 @@ class SpeedtestCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self.start_time:
             return
 
-        now = dt_util.now()
         try:
             parts = list(map(int, self.start_time.split(":")))
             if len(parts) == 2:
@@ -255,10 +259,13 @@ class SpeedtestCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return None
 
-    @staticmethod
-    def _build_speedtest_cmd(server_id: str | None) -> list[str]:
+    def _build_speedtest_cmd(self, server_id: str | None) -> list[str]:
         """Build the speedtest command for an optional server ID."""
         cmd = [SPEEDTEST_BIN_PATH, "--accept-license", "--accept-gdpr", "--format=json"]
+        if self.source_interface:
+            cmd.extend(["--interface", self.source_interface])
+        if self.source_ip:
+            cmd.extend(["--ip", self.source_ip])
         if server_id:
             cmd.extend(["-s", server_id])
         return cmd
@@ -387,6 +394,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     isp_ul_speed = entry.options.get(
         CONF_ISP_UL_SPEED, entry.data.get(CONF_ISP_UL_SPEED)
     )
+    source_interface = entry.options.get(
+        CONF_SOURCE_INTERFACE, entry.data.get(CONF_SOURCE_INTERFACE)
+    )
+    source_ip = entry.options.get(CONF_SOURCE_IP, entry.data.get(CONF_SOURCE_IP))
     fallback_to_closest = entry.options.get(
         CONF_FALLBACK_TO_CLOSEST,
         entry.data.get(CONF_FALLBACK_TO_CLOSEST, DEFAULT_FALLBACK_TO_CLOSEST),
@@ -399,6 +410,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         server_id = "closest"
 
+    source_interface = (source_interface or "").strip() or None
+    source_ip = (source_ip or "").strip() or None
+
+    if not validate_source_ip(source_ip):
+        _LOGGER.warning(
+            "Invalid source_ip '%s' in config entry; ignoring source IP",
+            source_ip,
+        )
+        source_ip = None
+
     coordinator = SpeedtestCoordinator(
         hass,
         entry,
@@ -408,6 +429,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         start_time,
         isp_dl_speed,
         isp_ul_speed,
+        source_interface,
+        source_ip,
         fallback_to_closest,
     )
     hass.data[DOMAIN][entry.entry_id] = coordinator
