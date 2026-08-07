@@ -9,9 +9,14 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_DEVICE_ID, EVENT_HOMEASSISTANT_STARTED, Platform
+from homeassistant.const import (
+    ATTR_DEVICE_ID,
+    ATTR_ENTITY_ID,
+    EVENT_HOMEASSISTANT_STARTED,
+    Platform,
+)
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers import device_registry as dr, selector
+from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_point_in_time,
@@ -73,6 +78,11 @@ RUN_SPEEDTEST_SCHEMA = vol.Schema(
         vol.Optional(ATTR_DEVICE_ID): selector.DeviceSelector(
             selector.DeviceSelectorConfig(
                 filter=selector.DeviceFilterSelectorConfig(integration=DOMAIN)
+            )
+        ),
+        vol.Optional(ATTR_ENTITY_ID): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                filter=selector.EntityFilterSelectorConfig(integration=DOMAIN)
             )
         ),
     }
@@ -431,14 +441,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def run_speedtest_service(call: ServiceCall) -> None:
         """Service to manually run a speedtest."""
         device_id = call.data.get(ATTR_DEVICE_ID)
+        entity_id = call.data.get(ATTR_ENTITY_ID)
         coordinators: list[SpeedtestCoordinator]
 
-        if device_id:
+        def _coordinator_from_device(selected_device_id: str) -> SpeedtestCoordinator | None:
+            """Resolve a speedtest coordinator from a device ID."""
             device_registry = dr.async_get(hass)
-            device_entry = device_registry.async_get(device_id)
+            device_entry = device_registry.async_get(selected_device_id)
             if device_entry is None:
-                _LOGGER.warning("Unknown Ookla Speedtest device requested: %s", device_id)
-                return
+                _LOGGER.warning(
+                    "Unknown Ookla Speedtest device requested: %s",
+                    selected_device_id,
+                )
+                return None
 
             matching_entry_id = next(
                 (
@@ -454,9 +469,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if matching_entry_id is None:
                 _LOGGER.warning(
                     "Ookla Speedtest device is not linked to a loaded config entry: %s",
-                    device_id,
+                    selected_device_id,
                 )
-                return
+                return None
 
             config_entry = hass.config_entries.async_get_entry(matching_entry_id)
             if config_entry is None:
@@ -464,7 +479,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Ookla Speedtest config entry is not ready: %s",
                     matching_entry_id,
                 )
-                return
+                return None
 
             coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
             if coordinator is None:
@@ -472,6 +487,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Ookla Speedtest config entry is not ready: %s",
                     config_entry.title,
                 )
+                return None
+
+            return coordinator
+
+        if device_id:
+            coordinator = _coordinator_from_device(device_id)
+            if coordinator is None:
+                return
+            coordinators = [coordinator]
+        elif entity_id:
+            entity_entry = er.async_get(hass).async_get(entity_id)
+            if entity_entry is None:
+                _LOGGER.warning(
+                    "Unknown Ookla Speedtest entity requested: %s",
+                    entity_id,
+                )
+                return
+
+            if entity_entry.device_id is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest entity is not linked to a device: %s",
+                    entity_id,
+                )
+                return
+
+            coordinator = _coordinator_from_device(entity_entry.device_id)
+            if coordinator is None:
                 return
             coordinators = [coordinator]
         else:
