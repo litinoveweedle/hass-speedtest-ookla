@@ -222,6 +222,11 @@ class OoklaSpeedtestCard extends HTMLElement {
 
   _runSpeedtest() {
     if (this._isRunning) return;
+
+    const entityId =
+      this._config?.entities?.download ||
+      this._config?.entities?.ping ||
+      this._config?.entities?.upload;
     
     this._isRunning = true;
     const btn = this.shadowRoot.querySelector('.go-button');
@@ -230,7 +235,8 @@ class OoklaSpeedtestCard extends HTMLElement {
       btn.textContent = '...';
     }
 
-    this._hass.callService('ookla_speedtest', 'run_speedtest').then(() => {
+    const serviceData = entityId ? { entity_id: entityId } : {};
+    this._hass.callService('ookla_speedtest', 'run_speedtest', serviceData).then(() => {
       setTimeout(() => {
         this._isRunning = false;
         if (btn) {
