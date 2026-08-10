@@ -864,7 +864,15 @@ class OoklaSpeedtestDashboard extends HTMLElement {
       const el = this.shadowRoot.querySelector(id);
       if (!el) return;
       if (id === '#run') el.onclick = () => {
-        this._hass.callService('ookla_speedtest', 'run_speedtest');
+        const runEntityId =
+          e.download ||
+          e.ping ||
+          e.upload;
+        this._hass.callService(
+          'ookla_speedtest',
+          'run_speedtest',
+          runEntityId ? { entity_id: runEntityId } : {}
+        );
         el.classList.add('running');
         setTimeout(() => el.classList.remove('running'), 5000);
       };

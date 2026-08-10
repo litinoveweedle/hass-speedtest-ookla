@@ -6,11 +6,21 @@ import subprocess
 from datetime import datetime, timedelta
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
+from homeassistant.const import (
+    ATTR_DEVICE_ID,
+    ATTR_ENTITY_ID,
+    EVENT_HOMEASSISTANT_STARTED,
+    Platform,
+)
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.event import async_call_later, async_track_point_in_time
+from homeassistant.helpers import device_registry as dr, entity_registry as er, selector
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_point_in_time,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -62,6 +72,21 @@ from .www_manager import (
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
+
+RUN_SPEEDTEST_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_DEVICE_ID): selector.DeviceSelector(
+            selector.DeviceSelectorConfig(
+                filter=selector.DeviceFilterSelectorConfig(integration=DOMAIN)
+            )
+        ),
+        vol.Optional(ATTR_ENTITY_ID): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                filter=selector.EntityFilterSelectorConfig(integration=DOMAIN)
+            )
+        ),
+    }
+)
 
 
 async def async_setup_cards_and_resources(hass: HomeAssistant) -> None:
@@ -415,14 +440,94 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register service to manually run a speed test
     async def run_speedtest_service(call: ServiceCall) -> None:
         """Service to manually run a speedtest."""
-        # Clear sensor data before running test to avoid confusion with old data
-        coordinator.async_set_updated_data(None)
-        await coordinator.async_request_refresh()
+        device_id = call.data.get(ATTR_DEVICE_ID)
+        entity_id = call.data.get(ATTR_ENTITY_ID)
+        coordinators: list[SpeedtestCoordinator]
+
+        def _coordinator_from_device(selected_device_id: str) -> SpeedtestCoordinator | None:
+            """Resolve a speedtest coordinator from a device ID."""
+            device_registry = dr.async_get(hass)
+            device_entry = device_registry.async_get(selected_device_id)
+            if device_entry is None:
+                _LOGGER.warning(
+                    "Unknown Ookla Speedtest device requested: %s",
+                    selected_device_id,
+                )
+                return None
+
+            matching_entry_id = next(
+                (
+                    entry_id
+                    for entry_id in device_entry.config_entries
+                    if (
+                        entry := hass.config_entries.async_get_entry(entry_id)
+                    ) is not None
+                    and entry.domain == DOMAIN
+                ),
+                None,
+            )
+            if matching_entry_id is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest device is not linked to a loaded config entry: %s",
+                    selected_device_id,
+                )
+                return None
+
+            config_entry = hass.config_entries.async_get_entry(matching_entry_id)
+            if config_entry is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest config entry is not ready: %s",
+                    matching_entry_id,
+                )
+                return None
+
+            coordinator = hass.data[DOMAIN].get(config_entry.entry_id)
+            if coordinator is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest config entry is not ready: %s",
+                    config_entry.title,
+                )
+                return None
+
+            return coordinator
+
+        if device_id:
+            coordinator = _coordinator_from_device(device_id)
+            if coordinator is None:
+                return
+            coordinators = [coordinator]
+        elif entity_id:
+            entity_entry = er.async_get(hass).async_get(entity_id)
+            if entity_entry is None:
+                _LOGGER.warning(
+                    "Unknown Ookla Speedtest entity requested: %s",
+                    entity_id,
+                )
+                return
+
+            if entity_entry.device_id is None:
+                _LOGGER.warning(
+                    "Ookla Speedtest entity is not linked to a device: %s",
+                    entity_id,
+                )
+                return
+
+            coordinator = _coordinator_from_device(entity_entry.device_id)
+            if coordinator is None:
+                return
+            coordinators = [coordinator]
+        else:
+            coordinators = list(hass.data[DOMAIN].values())
+
+        for item in coordinators:
+            item.async_set_updated_data(None)
+            await item.async_request_refresh()
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_RUN_SPEEDTEST,
         run_speedtest_service,
+        schema=RUN_SPEEDTEST_SCHEMA,
     )
 
     # Delay first speedtest in interval mode to avoid blocking HA startup
@@ -462,9 +567,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.services.async_remove(DOMAIN, SERVICE_RUN_SPEEDTEST)
         if entry.entry_id in hass.data[DOMAIN]:
             hass.data[DOMAIN].pop(entry.entry_id)
+        if not hass.data[DOMAIN] and hass.services.has_service(DOMAIN, SERVICE_RUN_SPEEDTEST):
+            hass.services.async_remove(DOMAIN, SERVICE_RUN_SPEEDTEST)
 
     return unload_ok
 
